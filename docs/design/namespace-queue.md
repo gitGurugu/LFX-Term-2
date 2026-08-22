@@ -351,6 +351,8 @@ State == Open  &&  Ready == True
 
 `Ready=True` requires a valid parent, authorization, hierarchy, resource constraints, and plugin support. `Authorized` remains separate to distinguish authorization failures from other readiness failures.
 
+The Scheduler also performs a final parent-chain check when it builds a scheduling snapshot. Controller updates are eventually consistent, so a NamespaceQueue is excluded from the active scheduling view if any parent is closed, missing, or part of a cycle, even when the child's cached `Ready` condition has not been updated yet. The queue remains in the accounting view so allocated and reservation resources can drain correctly.
+
 `Authorized` is an observed condition on the NamespaceQueue. It indicates whether the NamespaceQueue's namespace is authorized to use its resolved cluster-scoped parent according to the parent's current `spec.allowedNamespaces` value. It does not replace admission-time validation of `Queue.spec.allowedNamespaces` updates.
 
 If the controller observes that an existing NamespaceQueue is no longer authorized despite admission protection, it sets `Authorized=False` and `Ready=False` on the affected NamespaceQueue subtree:
@@ -497,11 +499,17 @@ Invalid objects remain available for repair but are excluded from active schedul
 
 #### 3.5.4 Plugin Scope
 
-The initial implementation supports NamespaceQueue only in the capacity plugin. Its hierarchical model partitions resources by `deserved`, `capability`, and `guarantee`, with each NamespaceQueue subtree bounded by its cluster-scoped parent's allocation.
+NamespaceQueue uses the normalized `QueueInfo` path consumed by the built-in queue-aware plugins. The capacity, DRF, proportion, and nodegroup plugins use the same normalized resource, hierarchy, priority, and metadata fields for cluster Queues and NamespaceQueues. The existing cluster Queue behavior remains unchanged when the NamespaceQueue feature gate is disabled.
 
-The proportion plugin and other scheduling plugins are out of scope until NamespaceQueue support is extended to them.
+Plugins and external integrations must not assume that `QueueInfo.Queue` is non-nil. It is populated only for cluster-scoped Queues. NamespaceQueues are identified by `Scope`, `Namespace`, and `NamespaceQueue`, while scheduling decisions should use the normalized fields on `QueueInfo`.
 
-#### 3.5.5 Metrics
+The capacity plugin continues to enforce hierarchical resource limits, including `deserved`, `capability`, and `guarantee`, with each NamespaceQueue subtree bounded by its cluster-scoped parent's allocation.
+
+#### 3.5.5 External Extender Contract
+
+External extenders receive the normalized `QueueInfo` representation. For a NamespaceQueue, `QueueInfo.Scope` is `namespace`, `QueueInfo.Namespace` contains the workload namespace, and `QueueInfo.Queue` is nil. Extenders must use normalized fields such as `Capability`, `Guarantee`, `Deserved`, `Allocated`, `Reservation`, `Parent`, and `State` instead of dereferencing the raw cluster Queue object.
+
+#### 3.5.6 Metrics
 
 Queue and NamespaceQueue metrics use the canonical `QueueID` as the value of the existing `queue_name` label. A cluster-scoped Queue uses `<queue-name>`, while a NamespaceQueue uses `<namespace>/<queue-name>`.
 
